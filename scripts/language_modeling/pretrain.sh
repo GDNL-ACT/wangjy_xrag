@@ -1,8 +1,9 @@
 ## mistral-7b + SFR
-accelerate launch \
+/home/supie2/miniconda3/envs/wangjy_xrag/bin/accelerate launch \
     --mixed_precision bf16 \
     --num_machines 1 \
-    --num_processes 8 \
+    --num_processes 4 \
+    --gpu_ids 4,5,6,7 \
     --main_process_port 29666 \
     -m \
     src.language_modeling.train \

@@ -149,22 +149,22 @@ def encode_with_prompt_completion_format(example, tokenizer, max_seq_length):
 
 
 
-def save_with_accelerate(accelerator, model, tokenizer, output_dir, save_projector_only=False):
+def save_with_accelerate(accelerator, model, tokenizer, output_dir, save_projector_only=False, retriever=None):
     
     unwrapped_model = accelerator.unwrap_model(model)
 
     if save_projector_only:    
-            params_to_save = {
-                n:p.float() for n,p in unwrapped_model.named_parameters() 
-                if any(
-                    sub_string in n 
-                    for sub_string in ['embed_tokens','projector','lm_head']
-                    )
-                }
-            if accelerator.is_main_process:
-                os.makedirs(output_dir)
-                torch.save(params_to_save, os.path.join(output_dir,'ckpt.pth'))
-                unwrapped_model.config.save_pretrained(output_dir)
+        params_to_save = {
+            n:p.float() for n,p in unwrapped_model.named_parameters() 
+            if any(
+                sub_string in n 
+                for sub_string in ['embed_tokens','projector','lm_head']
+                )
+            }
+        if accelerator.is_main_process:
+            os.makedirs(output_dir, exist_ok=True)
+            torch.save(params_to_save, os.path.join(output_dir,'ckpt.pth'))
+            unwrapped_model.config.save_pretrained(output_dir)
 
     else:    
         # When doing multi-gpu training, we need to use accelerator.get_state_dict(model) to get the state_dict.
@@ -176,6 +176,27 @@ def save_with_accelerate(accelerator, model, tokenizer, output_dir, save_project
             output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save, state_dict=state_dict,
             safe_serialization=False, ## safetensors is buggy for now
         )
+
+    # 保存retriever的LoRA权重
+    if retriever is not None:
+        retriever_output_dir = os.path.join(output_dir, "retriever")
+        if accelerator.is_main_process:
+            os.makedirs(retriever_output_dir, exist_ok=True)
+        
+        # 获取unwrapped retriever model
+        unwrapped_retriever = accelerator.unwrap_model(retriever.model)
+        
+        # 保存LoRA权重
+        if hasattr(unwrapped_retriever, 'save_pretrained'):
+            unwrapped_retriever.save_pretrained(
+                retriever_output_dir, 
+                is_main_process=accelerator.is_main_process, 
+                save_function=accelerator.save,
+                safe_serialization=False
+            )
+            
+        if accelerator.is_main_process:
+            accelerator.print(f"Retriever LoRA checkpoint saved to {retriever_output_dir}")
 
     if accelerator.is_main_process:
         tokenizer.save_pretrained(output_dir)

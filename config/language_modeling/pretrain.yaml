@@ -26,7 +26,7 @@ clip_grad_norm: -1.0
 seed: 980406
 update_projector_only: true
 per_device_train_batch_size: 12
-gradient_accumulation_steps: 4 ## assume there are 8 GPUs, so the total batch size is 384
+gradient_accumulation_steps: 8 ## assume there are 8 GPUs, so the total batch size is 384
 
 
 ## logging

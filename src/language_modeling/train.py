@@ -368,6 +368,8 @@ def validate_during_pretrain(model,dataloader,accelerator,vocab_size,retriever):
 def main():
     args = parse_args()
     set_seed(args.seed)
+    accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps, log_with="wandb")
+
     ## we need to load retriever before accelerator init
     retriever = None
     retriever_hidden_size = -1
@@ -375,14 +377,13 @@ def main():
     retriever_tokenizer = None
     if args.retriever_name_or_path is not None:
         if args.retriever_name_or_path.lower() == 'salesforce/sfr-embedding-mistral':
-            retriever = SFR.from_pretrained(args.retriever_name_or_path,torch_dtype = torch.bfloat16)
+            retriever = SFR.from_pretrained(args.retriever_name_or_path,torch_dtype = torch.bfloat16, device_map=accelerator.device)
             retriever_tokenizer = AutoTokenizer.from_pretrained(args.retriever_name_or_path)
         retrieval_embed_length = retriever.get_embed_length()
         retriever_hidden_size = retriever.get_embed_dim()
         retriever.eval()
 
-    accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps, log_with="wandb")
-    accelerator.init_trackers(
+        accelerator.init_trackers(
         project_name=args.project_name, 
         config=args,
         init_kwargs={
@@ -464,6 +465,7 @@ def main():
         config=config,
         use_flash_attention_2=args.use_flash_attn,
         torch_dtype = torch.bfloat16 if accelerator.mixed_precision == 'bf16' else 'auto',
+        device_map=accelerator.device
     )
 
     num_added_tokens = 0
