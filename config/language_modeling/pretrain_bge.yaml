@@ -5,7 +5,7 @@ max_seq_length: 336
 retrieval_context_length: 180
 preprocessing_num_workers: 32
 overwrite_cache: false
-max_train_samples: 2000000
+max_train_samples: 20
 
 ## model
 model_name_or_path: mistralai/mistral-7b-instruct-v0.2

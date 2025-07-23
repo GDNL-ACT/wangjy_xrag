@@ -7,7 +7,7 @@ overwrite_cache: false
 use_rag_tuning: true
 
 ## model
-model_name_or_path: pretrained_model/sfr-mistral-7b
+# model_name_or_path: pretrained_model/sfr-mistral-7b
 chat_format: mistral
 retriever_name_or_path: Salesforce/SFR-Embedding-Mistral
 

@@ -1,5 +1,49 @@
 # xRAG
+## 运行说明
+1. 创建conda环境：
+```
+conda create -n xrag python=3.9 -y
+conda activate xrag
+```
 
+2. 安装依赖：
+```
+pip install -r requirements.txt
+```
+由于flash-attn构建较慢，使用预下载的whl包安装，如有版本问题可下载对应版本：（https://github.com/Dao-AILab/flash-attention/releases?expanded=true&page=5&q=）
+
+3. 配置环境变量：
+```
+export HF_ENDPOINT=https://hf-mirror.com
+export HF_HOME=$PWD/huggingface  # huggingface存储位置
+export WANDB_MODE=offline
+export WANDB_DIR=$PWD/wandb  # wandb存储位置
+```
+
+4. 下载预训练的wiki数据集并分割，下载结果存储在data/pretrain/wikipedia中；下载指令微调的数据集，下载内容存储在huggingface缓存中，最终数据集存储在data/instruction_tuning/processed/context_aware_instrution_tuning_data.jsonl：
+```
+bash prepare_data.sh
+```
+
+5. 预训练，参数中包含使用的卡数、batch size、梯度积累等：
+```
+bash pretrain.sh
+```
+训练日志和checkpoints由wandb保存在相关目录中，tokenize结果会缓存在huggingface目录中。
+
+6. 指令微调，默认加载wandb记录的最新训练的预训练模型，可手动更改model_name_or_path指定模型
+```
+bash instruction_tuning.sh
+```
+
+7. 模型评估，多卡跑多个测试任务，结果存在eval_res/SFR-Embedding-Mistral下，不过目前数据集还需要重新选择：
+```
+bash eval_all.sh
+```
+
+
+以下为原始readme
+## Introduction
 Official repo for [xRAG: Extreme Context Compression for Retrieval-augmented Generation with One Token](https://arxiv.org/abs/2405.13792)
 
 <div align=center>
@@ -69,7 +113,7 @@ with xRAG:
 CUDA_VISIBLE_DEVICES=0 python -m src.eval.run_eval \
         --data triviaqa \
         --model_name_or_path Hannibal046/xrag-7b \
-        --retriever_name_or_path Salesforce/SFR-Embedding-Mistral \
+        --retriever_name_or_path /data1/models/BAAI/bge-m3 \
         --use_rag
 ```
 

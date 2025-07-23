@@ -8,9 +8,9 @@ import os
 import time
 from typing import List, Dict, Any, Optional
 import numpy as np
-from openai import OpenAI
+import torch
+from transformers import AutoTokenizer, AutoModel
 from sklearn.metrics.pairwise import cosine_similarity
-# import tiktoken
 from tqdm import tqdm
 
 # 设置日志
@@ -22,46 +22,118 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Calculate semantic similarity using OpenAI embeddings")
+    parser = argparse.ArgumentParser(description="Calculate semantic similarity using BGE-M3 embeddings")
     
     parser.add_argument("--input_file", type=str, required=True, 
                        help="Input JSON file with evaluation results")
     parser.add_argument("--output_file", type=str, default=None,
                        help="Output JSON file (default: add '_with_similarity' to input filename)")
-    parser.add_argument("--openai_api_key", type=str, default=None,
-                       help="OpenAI API key (can also be set via OPENAI_API_KEY env var)")
-    parser.add_argument("--openai_base_url", type=str, default=None,
-                       help="OpenAI API base URL (optional, for custom endpoints)")
-    parser.add_argument("--embedding_model", type=str, default="text-embedding-ada-002",
-                       help="OpenAI embedding model to use")
-    parser.add_argument("--batch_size", type=int, default=100,
-                       help="Batch size for API calls")
-    parser.add_argument("--max_retries", type=int, default=3,
-                       help="Maximum number of retries for failed API calls")
-    parser.add_argument("--retry_delay", type=float, default=1.0,
-                       help="Delay between retries in seconds")
-    parser.add_argument("--rate_limit_delay", type=float, default=0.1,
-                       help="Delay between API calls to avoid rate limiting")
+    parser.add_argument("--embedding_model", type=str, default="BAAI/bge-m3",
+                       help="BGE embedding model path or name")
+    parser.add_argument("--batch_size", type=int, default=32,
+                       help="Batch size for embedding computation")
+    parser.add_argument("--max_length", type=int, default=512,
+                       help="Maximum sequence length for the model")
+    parser.add_argument("--device", type=str, default=None,
+                       help="Device to use (cuda/cpu), auto-detect if not specified")
     parser.add_argument("--min_text_length", type=int, default=1,
                        help="Minimum text length to calculate similarity (skip if either text is shorter)")
+    parser.add_argument("--use_fp16", action="store_true",
+                       help="Use half precision for faster inference")
     
     return parser.parse_args()
 
-def count_tokens(text: str, model: str = "text-embedding-ada-002") -> int:
-    """计算文本的token数量"""
-    try:
-        encoding = tiktoken.encoding_for_model(model)
-        return len(encoding.encode(text))
-    except:
-        # 如果模型不支持，使用cl100k_base编码作为fallback
-        encoding = tiktoken.get_encoding("cl100k_base")
-        return len(encoding.encode(text))
+class BGEEmbedder:
+    """BGE-M3嵌入模型包装器"""
+    
+    def __init__(self, model_path: str, device: str = None, max_length: int = 512, use_fp16: bool = False):
+        self.model_path = model_path
+        self.max_length = max_length
+        self.use_fp16 = use_fp16
+        
+        # 设置设备
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
+        
+        logger.info(f"Loading BGE model from {model_path} on {self.device}")
+        
+        # 加载分词器和模型
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        self.model = AutoModel.from_pretrained(model_path)
+        
+        # 移动到指定设备
+        self.model = self.model.to(self.device)
+        
+        # 设置为评估模式
+        self.model.eval()
+        
+        # 如果使用半精度
+        if self.use_fp16 and self.device.type == 'cuda':
+            self.model = self.model.half()
+        
+        logger.info(f"Model loaded successfully on {self.device}")
+    
+    def encode(self, texts: List[str], batch_size: int = 32, normalize_embeddings: bool = True) -> np.ndarray:
+        """
+        将文本列表编码为嵌入向量
+        
+        Args:
+            texts: 文本列表
+            batch_size: 批处理大小
+            normalize_embeddings: 是否归一化嵌入向量
+        
+        Returns:
+            嵌入向量数组，形状为 (len(texts), embedding_dim)
+        """
+        all_embeddings = []
+        
+        with torch.no_grad():
+            for i in tqdm(range(0, len(texts), batch_size), desc="Computing embeddings"):
+                batch_texts = texts[i:i + batch_size]
+                
+                # 分词
+                encoded = self.tokenizer(
+                    batch_texts,
+                    padding=True,
+                    truncation=True,
+                    max_length=self.max_length,
+                    return_tensors='pt'
+                )
+                
+                # 移动到设备
+                input_ids = encoded['input_ids'].to(self.device)
+                attention_mask = encoded['attention_mask'].to(self.device)
+                
+                # 如果使用半精度，确保输入也是半精度
+                if self.use_fp16 and self.device.type == 'cuda':
+                    input_ids = input_ids.half()
+                    attention_mask = attention_mask.half()
+                
+                # 获取模型输出
+                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                
+                # 使用CLS token的嵌入或平均池化
+                # BGE模型通常使用CLS token
+                embeddings = outputs.last_hidden_state[:, 0]  # CLS token
+                
+                # 归一化
+                if normalize_embeddings:
+                    embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+                
+                # 转换为numpy并添加到结果列表
+                embeddings_np = embeddings.cpu().float().numpy()
+                all_embeddings.append(embeddings_np)
+        
+        # 合并所有批次的结果
+        return np.vstack(all_embeddings)
 
 def is_valid_text(text: str, min_length: int = 1) -> bool:
     """检查文本是否有效（非空且长度足够）"""
     return text is not None and text.strip() and len(text.strip()) >= min_length
 
-def get_embeddings_batch(client: OpenAI, texts: List[str], model: str, max_retries: int = 3, retry_delay: float = 1.0) -> List[Optional[List[float]]]:
+def get_embeddings_batch(embedder: BGEEmbedder, texts: List[str], batch_size: int = 32) -> List[Optional[np.ndarray]]:
     """批量获取文本嵌入，返回None表示无效文本"""
     if not texts:
         return []
@@ -81,38 +153,31 @@ def get_embeddings_batch(client: OpenAI, texts: List[str], model: str, max_retri
     # 获取有效文本的嵌入
     embeddings_result = [None] * len(texts)
     
-    for attempt in range(max_retries):
-        try:
-            response = client.embeddings.create(
-                input=valid_texts,
-                model=model
-            )
-            
-            # 将嵌入结果放回对应位置
-            for i, embedding_data in enumerate(response.data):
-                original_index = valid_indices[i]
-                embeddings_result[original_index] = embedding_data.embedding
-            
-            return embeddings_result
-            
-        except Exception as e:
-            logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
-            if attempt < max_retries - 1:
-                time.sleep(retry_delay * (2 ** attempt))  # 指数退避
-            else:
-                logger.error(f"Failed to get embeddings after {max_retries} attempts")
-                raise e
+    try:
+        # 计算嵌入
+        embeddings = embedder.encode(valid_texts, batch_size=batch_size)
+        
+        # 将嵌入结果放回对应位置
+        for i, embedding in enumerate(embeddings):
+            original_index = valid_indices[i]
+            embeddings_result[original_index] = embedding
+        
+        return embeddings_result
+        
+    except Exception as e:
+        logger.error(f"Failed to get embeddings: {str(e)}")
+        raise e
 
-def calculate_semantic_similarity(embedding1: Optional[List[float]], embedding2: Optional[List[float]]) -> float:
+def calculate_semantic_similarity(embedding1: Optional[np.ndarray], embedding2: Optional[np.ndarray]) -> float:
     """计算两个嵌入向量之间的余弦相似度"""
     # 如果任一嵌入为None或空，返回0
-    if not embedding1 or not embedding2:
+    if embedding1 is None or embedding2 is None:
         return 0.0
     
     try:
-        # 转换为numpy数组并重塑
-        emb1 = np.array(embedding1).reshape(1, -1)
-        emb2 = np.array(embedding2).reshape(1, -1)
+        # 重塑为二维数组
+        emb1 = embedding1.reshape(1, -1)
+        emb2 = embedding2.reshape(1, -1)
         
         # 计算余弦相似度
         similarity = cosine_similarity(emb1, emb2)[0][0]
@@ -121,7 +186,7 @@ def calculate_semantic_similarity(embedding1: Optional[List[float]], embedding2:
         logger.warning(f"Failed to calculate similarity: {str(e)}")
         return 0.0
 
-def process_samples_with_embeddings(samples: List[Dict[Any, Any]], client: OpenAI, args: argparse.Namespace) -> List[Dict[Any, Any]]:
+def process_samples_with_embeddings(samples: List[Dict[Any, Any]], embedder: BGEEmbedder, args: argparse.Namespace) -> List[Dict[Any, Any]]:
     """处理样本，添加语义相似度信息"""
     
     # 收集需要计算嵌入的文本
@@ -159,42 +224,12 @@ def process_samples_with_embeddings(samples: List[Dict[Any, Any]], client: OpenA
     
     logger.info(f"Processing {len(valid_indices)} valid text pairs for semantic similarity calculation")
     
-    # 检查token数量
-    # total_tokens = 0
-    # for text in predictions + references:
-    #     total_tokens += count_tokens(text, args.embedding_model)
-    
-    # logger.info(f"Total tokens to process: {total_tokens:,}")
-    
     # 批量获取嵌入
-    all_embeddings = []
-    all_texts = predictions + references
+    logger.info("Computing prediction embeddings...")
+    prediction_embeddings = get_embeddings_batch(embedder, predictions, args.batch_size)
     
-    progress_bar = tqdm(range(0, len(all_texts), args.batch_size), desc="Getting embeddings")
-    
-    for start_idx in progress_bar:
-        end_idx = min(start_idx + args.batch_size, len(all_texts))
-        batch_texts = all_texts[start_idx:end_idx]
-        
-        try:
-            batch_embeddings = get_embeddings_batch(
-                client, batch_texts, args.embedding_model, 
-                args.max_retries, args.retry_delay
-            )
-            all_embeddings.extend(batch_embeddings)
-            
-            # 速率限制
-            if args.rate_limit_delay > 0:
-                time.sleep(args.rate_limit_delay)
-                
-        except Exception as e:
-            logger.error(f"Failed to process batch {start_idx}-{end_idx}: {str(e)}")
-            # 为失败的批次添加None嵌入
-            all_embeddings.extend([None for _ in batch_texts])
-    
-    # 分离预测和参考的嵌入
-    prediction_embeddings = all_embeddings[:len(predictions)]
-    reference_embeddings = all_embeddings[len(predictions):]
+    logger.info("Computing reference embeddings...")
+    reference_embeddings = get_embeddings_batch(embedder, references, args.batch_size)
     
     # 计算相似度并更新样本
     updated_samples = samples.copy()
@@ -306,17 +341,6 @@ def update_summary_with_semantic_metrics(summary: Dict[str, Any], samples: List[
 def main():
     args = parse_args()
     
-    # 设置OpenAI客户端
-    api_key = args.openai_api_key or os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        raise ValueError("OpenAI API key must be provided via --openai_api_key or OPENAI_API_KEY environment variable")
-    
-    client_kwargs = {'api_key': api_key}
-    if args.openai_base_url:
-        client_kwargs['base_url'] = args.openai_base_url
-    
-    client = OpenAI(**client_kwargs)
-    
     # 设置输出文件名
     if args.output_file is None:
         input_name, input_ext = os.path.splitext(args.input_file)
@@ -339,9 +363,21 @@ def main():
     samples = data['samples']
     logger.info(f"Found {len(samples)} samples in input file")
     
+    # 初始化BGE嵌入器
+    try:
+        embedder = BGEEmbedder(
+            model_path=args.embedding_model,
+            device=args.device,
+            max_length=args.max_length,
+            use_fp16=args.use_fp16
+        )
+    except Exception as e:
+        logger.error(f"Failed to initialize BGE embedder: {str(e)}")
+        return
+    
     # 处理样本，添加语义相似度
     try:
-        updated_samples = process_samples_with_embeddings(samples, client, args)
+        updated_samples = process_samples_with_embeddings(samples, embedder, args)
     except Exception as e:
         logger.error(f"Failed to process samples: {str(e)}")
         return
@@ -361,6 +397,10 @@ def main():
         'embedding_model': args.embedding_model,
         'processing_timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
         'min_text_length': args.min_text_length,
+        'max_length': args.max_length,
+        'batch_size': args.batch_size,
+        'device': str(embedder.device),
+        'use_fp16': args.use_fp16,
         'total_samples_processed': len([s for s in updated_samples if s.get('prediction_embedding_available', False) and s.get('reference_embedding_available', False)]),
         'skipped_samples': len([s for s in updated_samples if s.get('similarity_skip_reason')])
     }

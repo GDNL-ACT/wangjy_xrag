@@ -1,0 +1,11 @@
+torch==2.1.1
+transformers==4.48.0
+accelerate==1.8.1
+datasets==2.17.1
+deepspeed==0.13.2
+sentencepiece==0.2.0
+wandb==0.21.0
+numpy==1.26.4
+wget==3.2
+importlib_metadata==8.7.0
+flash_attn-2.3.4+cu122torch2.1cxx11abiFALSE-cp39-cp39-linux_x86_64.whl

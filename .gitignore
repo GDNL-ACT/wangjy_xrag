@@ -28,5 +28,9 @@ pretrained_model
 DeepSpeed
 experiments
 .vscode
-*.jsonl
+text.jsonl
+test.jsonl
+train.jsonl
+dev.jsonl
+context_aware_instrution_tuning_data.jsonl
 huggingface

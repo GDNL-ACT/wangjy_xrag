@@ -5,9 +5,9 @@ accelerate launch \
     --num_processes 8 \
     --main_process_port 29666 \
     -m src.language_modeling.train \
-        --config config/language_modeling/finetune.yaml \
-        --chat_format mistral --model_name_or_path pretrained_model/sfr-mistral-7b \
-        --train_file data/instruction_tuning/processed/ablation_data.jsonl
+    --config config/language_modeling/finetune.yaml \
+    --chat_format mistral \
+    --model_name_or_path pretrained_model/sfr-mistral-7b
     
 
 
