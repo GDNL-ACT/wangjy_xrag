@@ -179,30 +179,41 @@ total_data = []
 # In[9]:
 
 
-# ## ms_marco
-# data = datasets.load_dataset('ms_marco',"v2.1")
-# data = list(data['train'])
-# # print(len(data['train']))
-# # print(data['train'][0])
-# for idx,sample in enumerate(data[:100_000]):
+## ms_marco
+data = datasets.load_dataset('ms_marco',"v2.1")
+data = list(data['train'])
+# print(len(data['train']))
+# print(data['train'][0])
+for idx,sample in enumerate(data[:100_000]):
 
-#     question = sample['query'].lstrip(")") + '\n'
-#     question = random.choice(templates_for_qa).format_map(dict(question=question))
-#     answer = sample["answers"][0]
+    question = sample['query'].lstrip(")") + '\n'
+    question = random.choice(templates_for_qa).format_map(dict(question=question))
+    answer = sample["answers"][0]
+    
+    passage = ""
+    if 'passages' in sample:
+        is_selected_list = sample['passages']['is_selected']
+        passage_text_list = sample['passages']['passage_text']
+        
+        for i, is_selected in enumerate(is_selected_list):
+            if is_selected == 1:
+                passage=passage_text_list[i]
 
-#     messages = [
-#         {"role":"user","content":question},
-#         {"role":"assistant","content":answer},
-#     ]
+    messages = [
+        {"role":"user","content":question},
+        {"role":"assistant","content":answer},
+    ]
 
-#     total_data.append(
-#         {
-#             "id":f"ms_marco_{idx}",
-#             "messages":messages,
-#             "task_type":"open_qa",
-#         }
-#     )
-# print(total_data[-1])
+    total_data.append(
+        {
+            "id":f"ms_marco_{idx}",
+            "messages":messages,
+            "task_type":"open_qa",
+            "background": passage,
+        }
+    )
+print(total_data[-1])
+
 
 # In[10]:
 
