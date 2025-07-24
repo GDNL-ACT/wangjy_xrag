@@ -46,11 +46,6 @@ bash eval_all.sh
 ## Introduction
 Official repo for [xRAG: Extreme Context Compression for Retrieval-augmented Generation with One Token](https://arxiv.org/abs/2405.13792)
 
-<div align=center>
-<img src="assets/framework.jpg" alt="xRAG">
-</div>
-
-
 ## Get Started
 Refer to `Dockerfile` for required packages
 
